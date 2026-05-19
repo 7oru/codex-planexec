@@ -2,7 +2,7 @@
 
 ## Summary
 
-Build `codex-planexec` as a Codex-side harness plugin that lets Codex plan/review while delegating bounded implementation work to `kimi-cli` in non-interactive mode. V1 will support only Kimi as the worker, use Git diffs as the source of truth, enforce path policy after execution, and return a structured review packet for Codex to inspect.
+Build `codex-planexec` as a Codex-side harness plugin that lets Codex plan/review while delegating bounded implementation work to `kimi-cli` in non-interactive mode. V1 will support only Kimi as the worker, use Git diffs as the source of truth, enforce path policy after execution, and return a compressed review packet for Codex to inspect without loading full logs or full diffs by default.
 
 Default stack: Node.js + TypeScript CLI, because subprocess control, JSON schemas, npm packaging, and Codex plugin distribution are straightforward.
 
@@ -17,7 +17,7 @@ codex-planexec run --task <task.json> --repo <repo> --out <run-dir>
 
 - Define three JSON interfaces:
   - `task.json`: task id, user goal, planner instructions, allowed/blocked paths, validation commands, worker config.
-  - `review.json`: status, worker exit info, changed files, policy violations, validation results, summary, transcript path.
+  - `review.json`: compressed review packet with status, changed file summaries, policy/validation summaries, focused excerpts, and artifact paths.
   - `policy.json` optional later; V1 keeps policy embedded in `task.json`.
 - Run Kimi through its non-interactive path:
 
@@ -34,6 +34,7 @@ kimi --work-dir <repo> --print --quiet --afk -p <worker-prompt>
   - `post-status.txt`
   - `changed-files.txt`
   - `diff.patch`
+  - validation logs
   - `review.json`
 
 ## Harness Behavior
@@ -54,9 +55,14 @@ kimi --work-dir <repo> --print --quiet --afk -p <worker-prompt>
   - Default blocked paths: `.git/**`, `.env`, `.env.*`, `node_modules/**`, lockfiles unless explicitly allowed.
 - Validation gate:
   - Run each `validation_commands` entry from `task.json` in order.
-  - Store command, exit code, stdout/stderr snippet, and duration.
+  - Store full stdout/stderr in artifact files, but include only concise failure excerpts in `review.json`.
   - If policy passes but validation fails, return `status: "needs_fix"`.
   - If policy and validation pass, return `status: "accepted_candidate"` rather than final acceptance; Codex remains the real reviewer.
+- Evidence compression:
+  - Treat Kimi as the context-heavy executor and Codex as the evidence-driven reviewer.
+  - Do not include full stdout, full stderr, full test logs, full source files, or full diff text in `review.json`.
+  - Include changed file stats, compact per-file summaries, failing test excerpts, selected relevant diff hunks, Kimi self-report, and artifact paths.
+  - Let Codex drill into `diff.patch`, logs, or source files only when the compressed packet points to a specific review target.
 - No auto-revert in V1. If rejected, harness reports violations and leaves the worktree for Codex/user review.
 
 ## Public Interfaces
@@ -71,6 +77,12 @@ Use this MVP `task.json` shape:
   "allowed_write_paths": ["src/**", "tests/**"],
   "blocked_paths": [".git/**", ".env", ".env.*", "node_modules/**", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
   "validation_commands": ["npm test", "npm run build"],
+  "review_budget": {
+    "max_diff_hunks": 8,
+    "max_log_excerpt_chars": 4000,
+    "include_full_diff": false,
+    "include_full_stdout": false
+  },
   "worker": {
     "kind": "kimi",
     "command": "kimi",
@@ -85,9 +97,33 @@ Use these `review.json` statuses:
 ```json
 {
   "status": "accepted_candidate | needs_fix | rejected | blocked | error",
-  "changed_files": [],
-  "policy_violations": [],
-  "validation_results": [],
+  "changed_files": [
+    {
+      "path": "src/policy.ts",
+      "additions": 42,
+      "deletions": 8,
+      "summary": "Added allowed/blocked path matching."
+    }
+  ],
+  "policy": {
+    "status": "passed | failed",
+    "violations": []
+  },
+  "validation": {
+    "status": "passed | failed | skipped",
+    "failures": [
+      {
+        "command": "npm test",
+        "excerpt": "Expected rejected, received needs_fix..."
+      }
+    ]
+  },
+  "review_focus": [
+    "src/policy.ts path matching precedence",
+    "src/review.ts status calculation"
+  ],
+  "selected_diff_hunks": [],
+  "worker_report": "Short factual self-report from Kimi.",
   "worker": {
     "exit_code": 0,
     "timed_out": false
@@ -113,10 +149,16 @@ Use these `review.json` statuses:
   - validation failure returns `needs_fix`
   - clean policy plus passing validation returns `accepted_candidate`
   - Kimi nonzero exit returns `error` unless output begins with `BLOCKED:`
+- Unit test evidence compression:
+  - full stdout/stderr are written as artifacts, not embedded in `review.json`
+  - log excerpts respect `max_log_excerpt_chars`
+  - selected diff hunks respect `max_diff_hunks`
+  - review packet points Codex to relevant files without including full source
 - Integration test with a fake `kimi` executable:
   - fake worker edits an allowed file and passes validation
   - fake worker edits a blocked file and is rejected
   - fake worker prints `BLOCKED:` and produces `status: "blocked"`
+  - fake worker produces long logs and large diffs that are compressed into a small review packet
 - Manual smoke test:
   - run `codex-planexec run` against this repo with fake Kimi first
   - then run against a tiny disposable Git repo with real `kimi --print --quiet`
@@ -126,5 +168,6 @@ Use these `review.json` statuses:
 - This is a Codex plugin/harness project, not a Kimi plugin.
 - V1 supports only Kimi as the execution worker; other workers come after the harness contract is stable.
 - V1 uses post-run policy enforcement instead of sandboxing Kimi at the filesystem layer.
+- V1 optimizes Codex usage by passing compressed evidence by default and preserving full artifacts on disk for drill-down review.
 - V1 does not auto-commit, auto-stage, auto-revert, or open PRs.
 - Codex remains the final reviewer and state owner; `accepted_candidate` means "ready for Codex review," not merged or trusted.
