@@ -3,6 +3,7 @@ import { relative, resolve } from "node:path";
 
 import { createRunDirectory, writeJsonArtifact, writeTextArtifact } from "./artifacts.ts";
 import { collectGitSnapshot } from "./git.ts";
+import { selectDiffHunks } from "./evidence.ts";
 import { evaluateWritePolicy } from "./policy.ts";
 import { calculateReviewStatus } from "./review.ts";
 import { normalizeTaskSpec } from "./task.ts";
@@ -68,7 +69,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
     policy,
     validation,
     review_focus: changedFiles,
-    selected_diff_hunks: [],
+    selected_diff_hunks: selectDiffHunks(postSnapshot.diff, task.review_budget),
     worker_report: compactWorkerReport(workerOutput, workerRun.stderr),
     worker,
     artifacts: {
