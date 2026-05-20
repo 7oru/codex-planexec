@@ -23,7 +23,7 @@ export async function assertGitRepo(repo: string): Promise<void> {
 export async function collectGitSnapshot(repo: string): Promise<GitSnapshot> {
   await assertGitRepo(repo);
 
-  const status = await runGit(repo, ["status", "--porcelain=v1"]);
+  const status = await runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"]);
   const diff = await runGit(repo, ["diff", "--binary"]);
 
   if (status.exitCode !== 0) {
