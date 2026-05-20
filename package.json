@@ -7,7 +7,7 @@
     "codex-planexec": "./src/cli.ts"
   },
   "scripts": {
-    "check": "node src/cli.ts --help >/dev/null && node src/cli.ts run --help >/dev/null"
+    "check": "node src/cli.ts --help >/dev/null && node src/cli.ts run --help >/dev/null && node --test tests/*.test.ts"
   },
   "engines": {
     "node": ">=24.0.0"
