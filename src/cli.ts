@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { runHarness } from "./runner.ts";
+
 type CommandResult = {
   exitCode: number;
   output?: string;
@@ -8,7 +10,7 @@ type CommandResult = {
 
 const VERSION = "0.1.0";
 
-function main(argv: string[]): CommandResult {
+async function main(argv: string[]): Promise<CommandResult> {
   const [command, ...args] = argv;
 
   if (!command || command === "--help" || command === "-h") {
@@ -29,7 +31,7 @@ function main(argv: string[]): CommandResult {
   };
 }
 
-function runCommand(args: string[]): CommandResult {
+async function runCommand(args: string[]): Promise<CommandResult> {
   if (args.includes("--help") || args.includes("-h")) {
     return { exitCode: 0, output: runHelp() };
   }
@@ -44,9 +46,15 @@ function runCommand(args: string[]): CommandResult {
     };
   }
 
+  const review = await runHarness({
+    taskPath: options.task,
+    repo: options.repo,
+    out: options.out,
+  });
+
   return {
-    exitCode: 2,
-    error: "The run command is scaffolded but worker execution is not implemented yet.",
+    exitCode: 0,
+    output: JSON.stringify(review, null, 2),
   };
 }
 
@@ -103,7 +111,7 @@ Required options:
 `;
 }
 
-const result = main(process.argv.slice(2));
+const result = await main(process.argv.slice(2));
 
 if (result.output) {
   console.log(result.output);
