@@ -186,3 +186,126 @@ console.log('implemented generated file');
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("runHarness ignores unchanged dirty preflight files when enforcing policy", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    await writeFile(join(repo, "README.md"), "clean\n", "utf8");
+    assert.equal((await runGit(repo, ["add", "README.md"])).exitCode, 0);
+    assert.equal(
+      (await runGit(repo, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"]))
+        .exitCode,
+      0,
+    );
+    await writeFile(join(repo, "README.md"), "preexisting dirty change\n", "utf8");
+
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+mkdirSync(join(process.cwd(), 'src'), { recursive: true });
+writeFileSync(join(process.cwd(), 'src', 'generated.txt'), 'hello\\n');
+console.log('implemented generated file');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "dirty",
+        goal: "Implement demo.",
+        instructions: "Only touch src.",
+        allowed_write_paths: ["src/**"],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const runDir = join(repo, ".codex-planexec", "runs", "dirty");
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: runDir,
+    });
+
+    assert.equal(review.status, "accepted_candidate");
+    assert.equal(review.policy.status, "passed");
+    assert.deepEqual(
+      review.changed_files.map((file) => file.path),
+      ["src/generated.txt"],
+    );
+    assert.doesNotMatch(await readFile(join(runDir, "diff.patch"), "utf8"), /README\.md/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runHarness still enforces policy when worker changes a dirty preflight file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    await writeFile(join(repo, "README.md"), "clean\n", "utf8");
+    assert.equal((await runGit(repo, ["add", "README.md"])).exitCode, 0);
+    assert.equal(
+      (await runGit(repo, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"]))
+        .exitCode,
+      0,
+    );
+    await writeFile(join(repo, "README.md"), "preexisting dirty change\n", "utf8");
+
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+writeFileSync(join(process.cwd(), 'README.md'), 'worker changed dirty file\\n');
+console.log('changed README');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "dirty-violation",
+        goal: "Implement demo.",
+        instructions: "Only touch src.",
+        allowed_write_paths: ["src/**"],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: join(repo, ".codex-planexec", "runs", "dirty-violation"),
+    });
+
+    assert.equal(review.status, "rejected");
+    assert.deepEqual(review.policy.violations, ["README.md is outside allowed_write_paths"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

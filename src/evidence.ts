@@ -5,16 +5,19 @@ export function filterDiffByPaths(diff: string, paths: string[]): string {
     return "";
   }
 
-  const allowedPaths = new Set(paths);
-  const sections: string[] = [];
+  const sections = splitDiffByPath(diff);
+
+  return paths.map((path) => sections.get(path)).filter(Boolean).join("\n");
+}
+
+export function splitDiffByPath(diff: string): Map<string, string> {
+  const sections = new Map<string, string>();
   let current: string[] | null = null;
   let currentPath: string | null = null;
 
   for (const line of diff.split("\n")) {
     if (line.startsWith("diff --git ")) {
-      if (current && currentPath && allowedPaths.has(currentPath)) {
-        sections.push(current.join("\n").trimEnd());
-      }
+      storeDiffSection(sections, currentPath, current);
 
       current = [line];
       currentPath = parseDiffPath(line);
@@ -26,11 +29,9 @@ export function filterDiffByPaths(diff: string, paths: string[]): string {
     }
   }
 
-  if (current && currentPath && allowedPaths.has(currentPath)) {
-    sections.push(current.join("\n").trimEnd());
-  }
+  storeDiffSection(sections, currentPath, current);
 
-  return sections.join("\n");
+  return sections;
 }
 
 export function selectDiffHunks(diff: string, budget: ReviewBudget): string[] {
@@ -75,4 +76,16 @@ export function selectDiffHunks(diff: string, budget: ReviewBudget): string[] {
 function parseDiffPath(line: string): string | null {
   const match = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
   return match ? match[2] : null;
+}
+
+function storeDiffSection(sections: Map<string, string>, path: string | null, lines: string[] | null): void {
+  if (!path || !lines) {
+    return;
+  }
+
+  const section = lines.join("\n").trimEnd();
+
+  if (section) {
+    sections.set(path, section);
+  }
 }

@@ -3,13 +3,14 @@ import { relative, resolve } from "node:path";
 
 import { createRunDirectory, writeJsonArtifact, writeTextArtifact } from "./artifacts.ts";
 import { collectGitSnapshot } from "./git.ts";
-import { filterDiffByPaths, selectDiffHunks } from "./evidence.ts";
+import { filterDiffByPaths, selectDiffHunks, splitDiffByPath } from "./evidence.ts";
 import { evaluateWritePolicy } from "./policy.ts";
 import { calculateReviewStatus } from "./review.ts";
 import { normalizeTaskSpec } from "./task.ts";
 import { runValidationCommands } from "./validation.ts";
 import { runKimiWorker } from "./worker.ts";
 import type { ChangedFileSummary, ReviewPacket, TaskSpec } from "./types.ts";
+import type { GitSnapshot } from "./git.ts";
 
 export type RunOptions = {
   taskPath: string;
@@ -37,7 +38,12 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
   await writeTextArtifact(runDir, "stderr.log", workerRun.stderr);
 
   const postSnapshot = await collectGitSnapshot(repo);
-  const changedFiles = excludeRunArtifacts(postSnapshot.changedFiles, repo, runDir);
+  const changedFiles = selectWorkerChangedFiles({
+    preSnapshot,
+    postSnapshot,
+    repo,
+    runDir,
+  });
   const diff = filterDiffByPaths(postSnapshot.diff, changedFiles);
   const policy = evaluateWritePolicy(changedFiles, task);
   const workerOutput = workerRun.stdout;
@@ -121,6 +127,20 @@ function excludeRunArtifacts(changedFiles: string[], repo: string, runDir: strin
   }
 
   return changedFiles.filter((file) => !isRunArtifactStatusPath(file, runDirRelative));
+}
+
+function selectWorkerChangedFiles(input: {
+  preSnapshot: GitSnapshot;
+  postSnapshot: GitSnapshot;
+  repo: string;
+  runDir: string;
+}): string[] {
+  const postFiles = excludeRunArtifacts(input.postSnapshot.changedFiles, input.repo, input.runDir);
+  const preFiles = new Set(excludeRunArtifacts(input.preSnapshot.changedFiles, input.repo, input.runDir));
+  const preDiffs = splitDiffByPath(input.preSnapshot.diff);
+  const postDiffs = splitDiffByPath(input.postSnapshot.diff);
+
+  return postFiles.filter((file) => !preFiles.has(file) || (preDiffs.get(file) ?? "") !== (postDiffs.get(file) ?? ""));
 }
 
 function isRunArtifactStatusPath(file: string, runDirRelative: string): boolean {
