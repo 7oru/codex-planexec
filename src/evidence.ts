@@ -1,5 +1,38 @@
 import type { ReviewBudget } from "./types.ts";
 
+export function filterDiffByPaths(diff: string, paths: string[]): string {
+  if (diff.trim() === "" || paths.length === 0) {
+    return "";
+  }
+
+  const allowedPaths = new Set(paths);
+  const sections: string[] = [];
+  let current: string[] | null = null;
+  let currentPath: string | null = null;
+
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      if (current && currentPath && allowedPaths.has(currentPath)) {
+        sections.push(current.join("\n").trimEnd());
+      }
+
+      current = [line];
+      currentPath = parseDiffPath(line);
+      continue;
+    }
+
+    if (current) {
+      current.push(line);
+    }
+  }
+
+  if (current && currentPath && allowedPaths.has(currentPath)) {
+    sections.push(current.join("\n").trimEnd());
+  }
+
+  return sections.join("\n");
+}
+
 export function selectDiffHunks(diff: string, budget: ReviewBudget): string[] {
   if (budget.include_full_diff) {
     return diff.trim() ? [diff] : [];
@@ -37,4 +70,9 @@ export function selectDiffHunks(diff: string, budget: ReviewBudget): string[] {
   }
 
   return hunks.slice(0, budget.max_diff_hunks);
+}
+
+function parseDiffPath(line: string): string | null {
+  const match = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+  return match ? match[2] : null;
 }

@@ -3,7 +3,7 @@ import { relative, resolve } from "node:path";
 
 import { createRunDirectory, writeJsonArtifact, writeTextArtifact } from "./artifacts.ts";
 import { collectGitSnapshot } from "./git.ts";
-import { selectDiffHunks } from "./evidence.ts";
+import { filterDiffByPaths, selectDiffHunks } from "./evidence.ts";
 import { evaluateWritePolicy } from "./policy.ts";
 import { calculateReviewStatus } from "./review.ts";
 import { normalizeTaskSpec } from "./task.ts";
@@ -38,6 +38,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
 
   const postSnapshot = await collectGitSnapshot(repo);
   const changedFiles = excludeRunArtifacts(postSnapshot.changedFiles, repo, runDir);
+  const diff = filterDiffByPaths(postSnapshot.diff, changedFiles);
   const policy = evaluateWritePolicy(changedFiles, task);
   const workerOutput = workerRun.stdout;
   const shouldValidate =
@@ -69,7 +70,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
     policy,
     validation,
     review_focus: changedFiles,
-    selected_diff_hunks: selectDiffHunks(postSnapshot.diff, task.review_budget),
+    selected_diff_hunks: selectDiffHunks(diff, task.review_budget),
     worker_report: compactWorkerReport(workerOutput, workerRun.stderr),
     worker,
     artifacts: {
@@ -82,7 +83,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
 
   await writeTextArtifact(runDir, "post-status.txt", postSnapshot.status);
   await writeTextArtifact(runDir, "changed-files.txt", `${changedFiles.join("\n")}${changedFiles.length > 0 ? "\n" : ""}`);
-  await writeTextArtifact(runDir, "diff.patch", postSnapshot.diff);
+  await writeTextArtifact(runDir, "diff.patch", diff);
   await writeJsonArtifact(runDir, "review.json", review);
 
   return review;

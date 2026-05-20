@@ -61,7 +61,10 @@ console.log('implemented generated file');
         summary: "Changed file detected by git status.",
       },
     ]);
+    assert.equal(review.selected_diff_hunks.length, 1);
+    assert.match(review.selected_diff_hunks[0], /src\/generated\.txt/);
     assert.match(await readFile(join(runDir, "worker-prompt.md"), "utf8"), /You are an execution worker/);
+    assert.match(await readFile(join(runDir, "diff.patch"), "utf8"), /src\/generated\.txt/);
     assert.match(await readFile(join(runDir, "review.json"), "utf8"), /implemented generated file/);
   } finally {
     await rm(root, { recursive: true, force: true });

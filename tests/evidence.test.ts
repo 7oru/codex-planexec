@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { selectDiffHunks } from "../src/evidence.ts";
+import { filterDiffByPaths, selectDiffHunks } from "../src/evidence.ts";
 import { DEFAULT_REVIEW_BUDGET } from "../src/task.ts";
 
 const diff = `diff --git a/src/a.ts b/src/a.ts
@@ -24,6 +24,14 @@ index 333..444 100644
 -b
 +bb
 `;
+
+test("filterDiffByPaths keeps only requested file sections", () => {
+  const filtered = filterDiffByPaths(diff, ["src/b.ts"]);
+
+  assert.doesNotMatch(filtered, /src\/a\.ts/);
+  assert.match(filtered, /diff --git a\/src\/b\.ts b\/src\/b\.ts/);
+  assert.match(filtered, /\+bb/);
+});
 
 test("selectDiffHunks returns selected hunks up to budget", () => {
   const hunks = selectDiffHunks(diff, {

@@ -33,7 +33,8 @@ test("collectGitSnapshot captures untracked files from git status", async () => 
 
     assert.match(snapshot.status, /\?\? README\.md/);
     assert.deepEqual(snapshot.changedFiles, ["README.md"]);
-    assert.equal(snapshot.diff, "");
+    assert.match(snapshot.diff, /diff --git a\/README\.md b\/README\.md/);
+    assert.match(snapshot.diff, /\+# demo/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

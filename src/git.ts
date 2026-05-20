@@ -34,10 +34,12 @@ export async function collectGitSnapshot(repo: string): Promise<GitSnapshot> {
     throw new Error(`Failed to read git diff: ${diff.stderr || diff.stdout}`);
   }
 
+  const untrackedDiff = await collectUntrackedDiff(repo, parseUntrackedStatusPaths(status.stdout));
+
   return {
     status: status.stdout,
     changedFiles: parsePorcelainStatusPaths(status.stdout),
-    diff: diff.stdout,
+    diff: joinDiffs([diff.stdout, untrackedDiff]),
   };
 }
 
@@ -77,6 +79,38 @@ export function runGit(repo: string, args: string[]): Promise<GitCommandResult> 
       });
     });
   });
+}
+
+function parseUntrackedStatusPaths(status: string): string[] {
+  const paths: string[] = [];
+
+  for (const line of status.split("\n")) {
+    if (line.startsWith("?? ")) {
+      paths.push(unquoteGitPath(line.slice(3)));
+    }
+  }
+
+  return paths;
+}
+
+async function collectUntrackedDiff(repo: string, paths: string[]): Promise<string> {
+  const diffs: string[] = [];
+
+  for (const path of paths) {
+    const result = await runGit(repo, ["diff", "--binary", "--no-index", "--", "/dev/null", path]);
+
+    if (result.exitCode > 1) {
+      throw new Error(`Failed to read untracked diff for ${path}: ${result.stderr || result.stdout}`);
+    }
+
+    diffs.push(result.stdout);
+  }
+
+  return joinDiffs(diffs);
+}
+
+function joinDiffs(diffs: string[]): string {
+  return diffs.map((diff) => diff.trimEnd()).filter(Boolean).join("\n");
 }
 
 function unquoteGitPath(path: string): string {
