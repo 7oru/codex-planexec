@@ -67,3 +67,119 @@ console.log('implemented generated file');
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("runHarness rejects blocked worker changes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+writeFileSync(join(process.cwd(), 'package-lock.json'), '{}\\n');
+console.log('changed lockfile');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "blocked",
+        goal: "Implement demo.",
+        instructions: "Only touch allowed files.",
+        allowed_write_paths: ["**"],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: join(repo, ".codex-planexec", "runs", "blocked"),
+    });
+
+    assert.equal(review.status, "rejected");
+    assert.equal(review.policy.status, "failed");
+    assert.deepEqual(review.policy.violations, ["package-lock.json matches blocked_paths"]);
+    assert.equal(review.validation.status, "skipped");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runHarness reports validation failures with compact excerpts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+mkdirSync(join(process.cwd(), 'src'), { recursive: true });
+writeFileSync(join(process.cwd(), 'src', 'generated.txt'), 'hello\\n');
+console.log('implemented generated file');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "needs-fix",
+        goal: "Implement demo.",
+        instructions: "Only touch src.",
+        allowed_write_paths: ["src/**"],
+        validation_commands: ["node -e \"console.error('validation failed'); process.exit(1)\""],
+        review_budget: {
+          max_diff_hunks: 8,
+          max_log_excerpt_chars: 12,
+          include_full_diff: false,
+          include_full_stdout: false,
+        },
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const runDir = join(repo, ".codex-planexec", "runs", "needs-fix");
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: runDir,
+    });
+
+    assert.equal(review.status, "needs_fix");
+    assert.equal(review.validation.status, "failed");
+    assert.deepEqual(review.validation.failures, [
+      {
+        command: "node -e \"console.error('validation failed'); process.exit(1)\"",
+        excerpt: "\n...[truncated]",
+      },
+    ]);
+    assert.equal(await readFile(join(runDir, "validation-01.stderr.log"), "utf8"), "validation failed\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
