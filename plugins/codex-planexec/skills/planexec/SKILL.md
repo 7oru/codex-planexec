@@ -9,7 +9,7 @@ Use this skill when the user wants Codex to plan or review while a worker CLI ag
 
 ## Current Status
 
-The harness is being built incrementally. The current CLI scaffold exists, but worker execution is not implemented yet.
+The MVP harness can run a configured Kimi-compatible worker command, collect Git checkpoints, enforce write policy, run validation commands, and emit a compressed `review.json` packet. Treat Codex as the final reviewer even when the harness returns `accepted_candidate`.
 
 ## Intended Workflow
 
