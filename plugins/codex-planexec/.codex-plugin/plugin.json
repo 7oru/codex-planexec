@@ -1,0 +1,37 @@
+{
+  "name": "codex-planexec",
+  "version": "0.1.0",
+  "description": "Codex-side harness for delegating bounded execution tasks to CLI worker agents.",
+  "author": {
+    "name": "Rick Tu",
+    "url": "https://github.com/7oru"
+  },
+  "homepage": "https://github.com/7oru/codex-planexec",
+  "repository": "https://github.com/7oru/codex-planexec",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "harness",
+    "planner-worker",
+    "kimi"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex PlanExec",
+    "shortDescription": "Delegate execution tasks to CLI worker agents with review gates.",
+    "longDescription": "Codex PlanExec is a harness for planner-worker workflows: Codex writes task specs and reviews compressed evidence while CLI agents perform bounded implementation work.",
+    "developerName": "Rick Tu",
+    "category": "Productivity",
+    "capabilities": [
+      "Write",
+      "Code"
+    ],
+    "websiteURL": "https://github.com/7oru/codex-planexec",
+    "defaultPrompt": [
+      "Delegate this implementation task through PlanExec.",
+      "Run a bounded worker task and review the evidence.",
+      "Create a PlanExec task spec for this change."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "codex-planexec",
+  "version": "0.1.0",
+  "description": "Planner-worker harness for delegating bounded implementation tasks to CLI agents.",
+  "type": "module",
+  "bin": {
+    "codex-planexec": "./src/cli.ts"
+  },
+  "scripts": {
+    "check": "node src/cli.ts --help >/dev/null && node src/cli.ts run --help >/dev/null"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "license": "MIT"
+}
