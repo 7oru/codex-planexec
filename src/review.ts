@@ -6,7 +6,11 @@ export function calculateReviewStatus(input: {
   policy: PolicyResult;
   validation: ValidationSummary;
 }): ReviewStatus {
-  if (input.workerOutput.trimStart().startsWith("BLOCKED:")) {
+  if (input.policy.status === "failed") {
+    return "rejected";
+  }
+
+  if (isWorkerBlockedOutput(input.workerOutput)) {
     return "blocked";
   }
 
@@ -14,15 +18,15 @@ export function calculateReviewStatus(input: {
     return "error";
   }
 
-  if (input.policy.status === "failed") {
-    return "rejected";
-  }
-
   if (input.validation.status === "failed") {
     return "needs_fix";
   }
 
   return "accepted_candidate";
+}
+
+export function isWorkerBlockedOutput(output: string): boolean {
+  return /^BLOCKED(?::|\s|$)/.test(output.trimStart());
 }
 
 export function createEmptyReviewPacket(status: ReviewStatus): ReviewPacket {
@@ -49,6 +53,7 @@ export function createEmptyReviewPacket(status: ReviewStatus): ReviewPacket {
       stdout: "stdout.log",
       stderr: "stderr.log",
     },
+    warnings: [],
     summary: "",
   };
 }

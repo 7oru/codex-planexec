@@ -8,6 +8,29 @@ export type WorkerRun = {
   worker: WorkerResult;
 };
 
+export async function runKimiInfo(input: { repo: string; task: TaskSpec; timeoutMs?: number }): Promise<WorkerRun> {
+  return runProcess({
+    command: input.task.worker.command,
+    args: ["info"],
+    cwd: input.repo,
+    timeoutMs: input.timeoutMs ?? 30 * 1000,
+  });
+}
+
+export function assertKimiInfoSucceeded(command: string, result: WorkerRun): void {
+  if (result.worker.timed_out) {
+    throw new Error(`Kimi worker preflight timed out: ${command} info`);
+  }
+
+  if (result.worker.exit_code !== 0) {
+    const detail = [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join("\n");
+    const excerpt = detail.length > 1000 ? `${detail.slice(0, 985)}\n...[truncated]` : detail;
+    const suffix = excerpt ? `\n${excerpt}` : "";
+
+    throw new Error(`Kimi worker preflight failed: ${command} info exited with code ${result.worker.exit_code}${suffix}`);
+  }
+}
+
 export async function runKimiWorker(input: {
   repo: string;
   task: TaskSpec;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { filterDiffByPaths, selectDiffHunks } from "../src/evidence.ts";
+import { countDiffStatsByPath, filterDiffByPaths, selectDiffHunks } from "../src/evidence.ts";
 import { DEFAULT_REVIEW_BUDGET } from "../src/task.ts";
 
 const diff = `diff --git a/src/a.ts b/src/a.ts
@@ -63,4 +63,17 @@ test("selectDiffHunks returns empty list for empty diff or zero budget", () => {
     }),
     [],
   );
+});
+
+test("countDiffStatsByPath counts changed lines without file headers", () => {
+  const stats = countDiffStatsByPath(diff);
+
+  assert.deepEqual(stats.get("src/a.ts"), {
+    additions: 2,
+    deletions: 2,
+  });
+  assert.deepEqual(stats.get("src/b.ts"), {
+    additions: 1,
+    deletions: 1,
+  });
 });

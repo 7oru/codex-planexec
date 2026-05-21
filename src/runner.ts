@@ -3,12 +3,12 @@ import { relative, resolve } from "node:path";
 
 import { createRunDirectory, writeJsonArtifact, writeTextArtifact } from "./artifacts.ts";
 import { collectGitSnapshot } from "./git.ts";
-import { filterDiffByPaths, selectDiffHunks, splitDiffByPath } from "./evidence.ts";
+import { countDiffStatsByPath, filterDiffByPaths, selectDiffHunks, splitDiffByPath } from "./evidence.ts";
 import { evaluateWritePolicy } from "./policy.ts";
-import { calculateReviewStatus } from "./review.ts";
+import { calculateReviewStatus, isWorkerBlockedOutput } from "./review.ts";
 import { normalizeTaskSpec } from "./task.ts";
 import { runValidationCommands } from "./validation.ts";
-import { runKimiWorker } from "./worker.ts";
+import { assertKimiInfoSucceeded, runKimiInfo, runKimiWorker } from "./worker.ts";
 import type { ChangedFileSummary, ReviewPacket, TaskSpec } from "./types.ts";
 import type { GitSnapshot } from "./git.ts";
 
@@ -29,6 +29,14 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
   await writeTextArtifact(runDir, "worker-prompt.md", workerPrompt);
   await writeTextArtifact(runDir, "pre-status.txt", preSnapshot.status);
 
+  const workerInfo = await runKimiInfo({
+    repo,
+    task,
+  });
+  await writeTextArtifact(runDir, "worker-info.stdout.log", workerInfo.stdout);
+  await writeTextArtifact(runDir, "worker-info.stderr.log", workerInfo.stderr);
+  assertKimiInfoSucceeded(task.worker.command, workerInfo);
+
   const workerRun = await runKimiWorker({
     repo,
     task,
@@ -48,7 +56,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
   const policy = evaluateWritePolicy(changedFiles, task);
   const workerOutput = workerRun.stdout;
   const shouldValidate =
-    !workerOutput.trimStart().startsWith("BLOCKED:") &&
+    !isWorkerBlockedOutput(workerOutput) &&
     !workerRun.worker.timed_out &&
     workerRun.worker.exit_code === 0 &&
     policy.status === "passed";
@@ -72,7 +80,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
   });
   const review: ReviewPacket = {
     status,
-    changed_files: summarizeChangedFiles(changedFiles),
+    changed_files: summarizeChangedFiles(changedFiles, diff),
     policy,
     validation,
     review_focus: changedFiles,
@@ -84,6 +92,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
       stdout: "stdout.log",
       stderr: "stderr.log",
     },
+    warnings: collectPreflightWarnings(preSnapshot),
     summary: "Harness run completed; inspect compressed status, policy, validation, and artifact paths.",
   };
 
@@ -115,7 +124,7 @@ ${task.allowed_write_paths.map((path) => `- ${path}`).join("\n")}
 Blocked paths:
 ${task.blocked_paths.map((path) => `- ${path}`).join("\n")}
 
-If blocked, write BLOCKED with the reason. Return evidence, not claims.
+If blocked, write BLOCKED: <reason>. Return evidence, not claims.
 `;
 }
 
@@ -135,12 +144,20 @@ function selectWorkerChangedFiles(input: {
   repo: string;
   runDir: string;
 }): string[] {
-  const postFiles = excludeRunArtifacts(input.postSnapshot.changedFiles, input.repo, input.runDir);
+  const postFiles = new Set(excludeRunArtifacts(input.postSnapshot.changedFiles, input.repo, input.runDir));
   const preFiles = new Set(excludeRunArtifacts(input.preSnapshot.changedFiles, input.repo, input.runDir));
   const preDiffs = splitDiffByPath(input.preSnapshot.diff);
   const postDiffs = splitDiffByPath(input.postSnapshot.diff);
+  const candidateFiles = new Set([...preFiles, ...postFiles]);
 
-  return postFiles.filter((file) => !preFiles.has(file) || (preDiffs.get(file) ?? "") !== (postDiffs.get(file) ?? ""));
+  return [...candidateFiles]
+    .filter((file) => {
+      const preDiff = preDiffs.get(file) ?? "";
+      const postDiff = postDiffs.get(file) ?? "";
+
+      return !preFiles.has(file) || !postFiles.has(file) || preDiff !== postDiff;
+    })
+    .sort();
 }
 
 function isRunArtifactStatusPath(file: string, runDirRelative: string): boolean {
@@ -154,11 +171,13 @@ function isRunArtifactStatusPath(file: string, runDirRelative: string): boolean 
   );
 }
 
-function summarizeChangedFiles(changedFiles: string[]): ChangedFileSummary[] {
+function summarizeChangedFiles(changedFiles: string[], diff: string): ChangedFileSummary[] {
+  const statsByPath = countDiffStatsByPath(diff);
+
   return changedFiles.map((path) => ({
     path,
-    additions: 0,
-    deletions: 0,
+    additions: statsByPath.get(path)?.additions ?? 0,
+    deletions: statsByPath.get(path)?.deletions ?? 0,
     summary: "Changed file detected by git status.",
   }));
 }
@@ -166,4 +185,12 @@ function summarizeChangedFiles(changedFiles: string[]): ChangedFileSummary[] {
 function compactWorkerReport(stdout: string, stderr: string): string {
   const report = stdout.trim() || stderr.trim();
   return report.length > 1000 ? `${report.slice(0, 985)}\n...[truncated]` : report;
+}
+
+function collectPreflightWarnings(preSnapshot: GitSnapshot): string[] {
+  if (preSnapshot.status.trim() === "") {
+    return [];
+  }
+
+  return ["Preflight worktree had existing changes before worker execution; see pre-status.txt."];
 }

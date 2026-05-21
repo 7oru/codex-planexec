@@ -28,6 +28,8 @@ kimi --work-dir <repo> --print --quiet --afk -p <worker-prompt>
 - Create a run directory under `.codex-planexec/runs/<timestamp>-<task-id>/` containing:
   - `task.json`
   - `worker-prompt.md`
+  - `worker-info.stdout.log`
+  - `worker-info.stderr.log`
   - `stdout.log`
   - `stderr.log`
   - `pre-status.txt`
@@ -133,6 +135,7 @@ Use these `review.json` statuses:
     "stdout": "stdout.log",
     "stderr": "stderr.log"
   },
+  "warnings": [],
   "summary": "Short factual summary."
 }
 ```

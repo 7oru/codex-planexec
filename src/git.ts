@@ -24,14 +24,10 @@ export async function collectGitSnapshot(repo: string): Promise<GitSnapshot> {
   await assertGitRepo(repo);
 
   const status = await runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"]);
-  const diff = await runGit(repo, ["diff", "--binary"]);
+  const diff = await collectTrackedDiff(repo);
 
   if (status.exitCode !== 0) {
     throw new Error(`Failed to read git status: ${status.stderr || status.stdout}`);
-  }
-
-  if (diff.exitCode !== 0) {
-    throw new Error(`Failed to read git diff: ${diff.stderr || diff.stdout}`);
   }
 
   const untrackedDiff = await collectUntrackedDiff(repo, parseUntrackedStatusPaths(status.stdout));
@@ -39,7 +35,7 @@ export async function collectGitSnapshot(repo: string): Promise<GitSnapshot> {
   return {
     status: status.stdout,
     changedFiles: parsePorcelainStatusPaths(status.stdout),
-    diff: joinDiffs([diff.stdout, untrackedDiff]),
+    diff: joinDiffs([diff, untrackedDiff]),
   };
 }
 
@@ -91,6 +87,36 @@ function parseUntrackedStatusPaths(status: string): string[] {
   }
 
   return paths;
+}
+
+async function collectTrackedDiff(repo: string): Promise<string> {
+  if (await hasGitHead(repo)) {
+    const result = await runGit(repo, ["diff", "--binary", "HEAD"]);
+
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to read git diff: ${result.stderr || result.stdout}`);
+    }
+
+    return result.stdout;
+  }
+
+  const cached = await runGit(repo, ["diff", "--binary", "--cached", "--root"]);
+  const worktree = await runGit(repo, ["diff", "--binary"]);
+
+  if (cached.exitCode !== 0) {
+    throw new Error(`Failed to read staged git diff: ${cached.stderr || cached.stdout}`);
+  }
+
+  if (worktree.exitCode !== 0) {
+    throw new Error(`Failed to read git diff: ${worktree.stderr || worktree.stdout}`);
+  }
+
+  return joinDiffs([cached.stdout, worktree.stdout]);
+}
+
+async function hasGitHead(repo: string): Promise<boolean> {
+  const result = await runGit(repo, ["rev-parse", "--verify", "HEAD"]);
+  return result.exitCode === 0;
 }
 
 async function collectUntrackedDiff(repo: string, paths: string[]): Promise<string> {

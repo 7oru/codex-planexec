@@ -20,6 +20,10 @@ test("runHarness writes preflight artifacts and compressed review packet", async
       `#!/usr/bin/env node
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
 mkdirSync(join(process.cwd(), 'src'), { recursive: true });
 writeFileSync(join(process.cwd(), 'src', 'generated.txt'), 'hello\\n');
 console.log('implemented generated file');
@@ -56,7 +60,7 @@ console.log('implemented generated file');
     assert.deepEqual(review.changed_files, [
       {
         path: "src/generated.txt",
-        additions: 0,
+        additions: 1,
         deletions: 0,
         summary: "Changed file detected by git status.",
       },
@@ -64,6 +68,7 @@ console.log('implemented generated file');
     assert.equal(review.selected_diff_hunks.length, 1);
     assert.match(review.selected_diff_hunks[0], /src\/generated\.txt/);
     assert.match(await readFile(join(runDir, "worker-prompt.md"), "utf8"), /You are an execution worker/);
+    assert.match(await readFile(join(runDir, "worker-prompt.md"), "utf8"), /BLOCKED: <reason>/);
     assert.match(await readFile(join(runDir, "diff.patch"), "utf8"), /src\/generated\.txt/);
     assert.match(await readFile(join(runDir, "review.json"), "utf8"), /implemented generated file/);
   } finally {
@@ -84,6 +89,10 @@ test("runHarness rejects blocked worker changes", async () => {
       `#!/usr/bin/env node
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
 writeFileSync(join(process.cwd(), 'package-lock.json'), '{}\\n');
 console.log('changed lockfile');
 `,
@@ -122,6 +131,65 @@ console.log('changed lockfile');
   }
 });
 
+test("runHarness stops before worker execution when Kimi info preflight fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.error('not configured');
+  process.exit(42);
+}
+mkdirSync(join(process.cwd(), 'src'), { recursive: true });
+writeFileSync(join(process.cwd(), 'src', 'should-not-run.txt'), 'bad\\n');
+console.log('worker should not run');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "preflight-fails",
+        goal: "Implement demo.",
+        instructions: "Only touch src.",
+        allowed_write_paths: ["src/**"],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const runDir = join(repo, ".codex-planexec", "runs", "preflight-fails");
+
+    await assert.rejects(
+      () =>
+        runHarness({
+          taskPath: join(root, "task.json"),
+          repo,
+          out: runDir,
+        }),
+      /Kimi worker preflight failed: .* info exited with code 42\nnot configured/,
+    );
+    assert.equal(await readFile(join(runDir, "worker-info.stderr.log"), "utf8"), "not configured\n");
+    await assert.rejects(() => readFile(join(repo, "src", "should-not-run.txt"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("runHarness reports validation failures with compact excerpts", async () => {
   const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
   const repo = join(root, "repo");
@@ -135,6 +203,10 @@ test("runHarness reports validation failures with compact excerpts", async () =>
       `#!/usr/bin/env node
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
 mkdirSync(join(process.cwd(), 'src'), { recursive: true });
 writeFileSync(join(process.cwd(), 'src', 'generated.txt'), 'hello\\n');
 console.log('implemented generated file');
@@ -209,6 +281,10 @@ test("runHarness ignores unchanged dirty preflight files when enforcing policy",
       `#!/usr/bin/env node
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
 mkdirSync(join(process.cwd(), 'src'), { recursive: true });
 writeFileSync(join(process.cwd(), 'src', 'generated.txt'), 'hello\\n');
 console.log('implemented generated file');
@@ -242,6 +318,9 @@ console.log('implemented generated file');
 
     assert.equal(review.status, "accepted_candidate");
     assert.equal(review.policy.status, "passed");
+    assert.deepEqual(review.warnings, [
+      "Preflight worktree had existing changes before worker execution; see pre-status.txt.",
+    ]);
     assert.deepEqual(
       review.changed_files.map((file) => file.path),
       ["src/generated.txt"],
@@ -274,6 +353,10 @@ test("runHarness still enforces policy when worker changes a dirty preflight fil
       `#!/usr/bin/env node
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
 writeFileSync(join(process.cwd(), 'README.md'), 'worker changed dirty file\\n');
 console.log('changed README');
 `,
@@ -304,6 +387,146 @@ console.log('changed README');
     });
 
     assert.equal(review.status, "rejected");
+    assert.deepEqual(review.policy.violations, ["README.md is outside allowed_write_paths"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runHarness includes staged worker changes in diff evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    await mkdir(join(repo, "src"));
+    await writeFile(join(repo, "src", "existing.txt"), "before\n", "utf8");
+    assert.equal((await runGit(repo, ["add", "src/existing.txt"])).exitCode, 0);
+    assert.equal(
+      (await runGit(repo, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"]))
+        .exitCode,
+      0,
+    );
+
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
+writeFileSync(join(process.cwd(), 'src', 'existing.txt'), 'after\\n');
+execFileSync('git', ['add', 'src/existing.txt'], { cwd: process.cwd() });
+console.log('staged existing file');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "staged",
+        goal: "Implement demo.",
+        instructions: "Only touch src.",
+        allowed_write_paths: ["src/**"],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const runDir = join(repo, ".codex-planexec", "runs", "staged");
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: runDir,
+    });
+
+    assert.equal(review.status, "accepted_candidate");
+    assert.deepEqual(
+      review.changed_files.map((file) => file.path),
+      ["src/existing.txt"],
+    );
+    assert.equal(review.changed_files[0].additions, 1);
+    assert.equal(review.changed_files[0].deletions, 1);
+    assert.equal(review.selected_diff_hunks.length, 1);
+    assert.match(review.selected_diff_hunks[0], /-before/);
+    assert.match(review.selected_diff_hunks[0], /\+after/);
+    assert.match(await readFile(join(runDir, "diff.patch"), "utf8"), /\+after/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runHarness detects when worker cleans a dirty preflight file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    await writeFile(join(repo, "README.md"), "clean\n", "utf8");
+    assert.equal((await runGit(repo, ["add", "README.md"])).exitCode, 0);
+    assert.equal(
+      (await runGit(repo, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"]))
+        .exitCode,
+      0,
+    );
+    await writeFile(join(repo, "README.md"), "preexisting dirty change\n", "utf8");
+
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
+writeFileSync(join(process.cwd(), 'README.md'), 'clean\\n');
+console.log('cleaned README');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "cleaned-dirty",
+        goal: "Implement demo.",
+        instructions: "Only touch src.",
+        allowed_write_paths: ["src/**"],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: join(repo, ".codex-planexec", "runs", "cleaned-dirty"),
+    });
+
+    assert.equal(review.status, "rejected");
+    assert.deepEqual(
+      review.changed_files.map((file) => file.path),
+      ["README.md"],
+    );
     assert.deepEqual(review.policy.violations, ["README.md is outside allowed_write_paths"]);
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -8,11 +8,12 @@ Inspired by Claude Code's opusplan mode: use a stronger model for planning/revie
 
 - Codex plugin scaffold under `plugins/codex-planexec/`
 - `codex-planexec run --task <task.json> --repo <repo> --out <run-dir>`
+- `kimi info` preflight before worker execution
 - Kimi-compatible worker invocation through non-interactive print mode
 - Git checkpoint capture before and after worker execution
 - Allowed/blocked path policy gate
 - Validation command runner with full logs saved as artifacts
-- Compressed `review.json` with changed files, policy/validation summaries, selected diff hunks, worker report, and artifact paths
+- Compressed `review.json` with changed file stats, policy/validation summaries, selected diff hunks, worker report, warnings, and artifact paths
 
 ## Usage
 

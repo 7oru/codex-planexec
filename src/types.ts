@@ -74,5 +74,6 @@ export type ReviewPacket = {
   worker_report: string;
   worker: WorkerResult;
   artifacts: ArtifactPaths;
+  warnings: string[];
   summary: string;
 };
