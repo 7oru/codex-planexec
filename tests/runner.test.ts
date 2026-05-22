@@ -199,6 +199,79 @@ console.log('renamed env into src');
   }
 });
 
+test("runHarness rejects blocked files committed by the worker", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    await mkdir(join(repo, "src"));
+    await writeFile(join(repo, "src", "existing.txt"), "before\n", "utf8");
+    assert.equal((await runGit(repo, ["add", "src/existing.txt"])).exitCode, 0);
+    assert.equal(
+      (await runGit(repo, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"]))
+        .exitCode,
+      0,
+    );
+
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
+writeFileSync(join(process.cwd(), '.env'), 'SECRET=1\\n');
+execFileSync('git', ['add', '.env'], { cwd: process.cwd() });
+execFileSync('git', ['-c', 'user.name=Test User', '-c', 'user.email=test@example.com', 'commit', '-m', 'commit blocked file'], { cwd: process.cwd() });
+console.log('committed blocked file');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "committed-blocked-file",
+        goal: "Implement demo.",
+        instructions: "Only touch src.",
+        allowed_write_paths: ["src/**"],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const runDir = join(repo, ".codex-planexec", "runs", "committed-blocked-file");
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: runDir,
+    });
+
+    assert.doesNotMatch((await runGit(repo, ["status", "--porcelain=v1"])).stdout, /\.env/);
+    assert.equal(review.status, "rejected");
+    assert.deepEqual(
+      review.changed_files.map((file) => file.path),
+      [".env"],
+    );
+    assert.deepEqual(review.policy.violations, [".env matches blocked_paths"]);
+    assert.equal(review.validation.status, "skipped");
+    assert.match(await readFile(join(runDir, "diff.patch"), "utf8"), /diff --git a\/\.env b\/\.env/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("runHarness stops before worker execution when Kimi info preflight fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
   const repo = join(root, "repo");

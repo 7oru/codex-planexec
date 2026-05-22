@@ -4,12 +4,18 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertGitRepo, collectGitSnapshot, parsePorcelainStatusPaths, runGit } from "../src/git.ts";
+import { assertGitRepo, collectGitSnapshot, parseNameStatusPaths, parsePorcelainStatusPaths, runGit } from "../src/git.ts";
 
 test("parsePorcelainStatusPaths includes modified, untracked, and both rename paths", () => {
   const paths = parsePorcelainStatusPaths(" M src/index.ts\n?? tests/new.test.ts\nR  old.ts -> src/new.ts\n");
 
   assert.deepEqual(paths, ["old.ts", "src/index.ts", "src/new.ts", "tests/new.test.ts"]);
+});
+
+test("parseNameStatusPaths includes both rename paths from nul-delimited git diff output", () => {
+  const paths = parseNameStatusPaths("M\0src/index.ts\0R100\0.env\0src/leaked.env\0");
+
+  assert.deepEqual(paths, [".env", "src/index.ts", "src/leaked.env"]);
 });
 
 test("assertGitRepo rejects non-repositories", async () => {

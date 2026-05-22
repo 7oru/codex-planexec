@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 
 import { createRunDirectory, writeJsonArtifact, writeTextArtifact } from "./artifacts.ts";
-import { collectGitSnapshot } from "./git.ts";
+import { collectGitSnapshot, resolveGitBaseRef } from "./git.ts";
 import { countDiffStatsByPath, filterDiffByPaths, selectDiffHunks, splitDiffByPath } from "./evidence.ts";
 import { evaluateWritePolicy } from "./policy.ts";
 import { calculateReviewStatus, isWorkerBlockedOutput } from "./review.ts";
@@ -23,6 +23,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
   const runDir = await createRunDirectory(options.out);
   const task = await readTaskSpec(options.taskPath);
   const preSnapshot = await collectGitSnapshot(repo);
+  const preRunBaseRef = await resolveGitBaseRef(repo);
 
   await writeJsonArtifact(runDir, "task.json", task);
   const workerPrompt = buildWorkerPrompt(task);
@@ -45,7 +46,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
   await writeTextArtifact(runDir, "stdout.log", workerRun.stdout);
   await writeTextArtifact(runDir, "stderr.log", workerRun.stderr);
 
-  const postSnapshot = await collectGitSnapshot(repo);
+  const postSnapshot = await collectGitSnapshot(repo, { baseRef: preRunBaseRef });
   const changedFiles = selectWorkerChangedFiles({
     preSnapshot,
     postSnapshot,
