@@ -131,6 +131,135 @@ console.log('changed lockfile');
   }
 });
 
+test("runHarness rejects worker writes to git hooks that git status cannot see", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
+writeFileSync(join(process.cwd(), '.git', 'hooks', 'pre-commit'), '#!/bin/sh\\necho blocked\\n');
+console.log('installed git hook');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "blocked-git-hook",
+        goal: "Implement demo.",
+        instructions: "Only touch allowed files.",
+        allowed_write_paths: ["**"],
+        validation_commands: ["node -e \"process.exit(1)\""],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: join(repo, ".codex-planexec", "runs", "blocked-git-hook"),
+    });
+
+    assert.doesNotMatch((await runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"])).stdout, /pre-commit/);
+    assert.equal(review.status, "rejected");
+    assert.deepEqual(
+      review.changed_files.map((file) => file.path),
+      [".git/hooks/pre-commit"],
+    );
+    assert.deepEqual(review.policy.violations, [".git/hooks/pre-commit matches blocked_paths"]);
+    assert.equal(review.validation.status, "skipped");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runHarness rejects ignored blocked paths that git status cannot see", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    await writeFile(join(repo, ".gitignore"), "node_modules/\n", "utf8");
+    assert.equal((await runGit(repo, ["add", ".gitignore"])).exitCode, 0);
+    assert.equal(
+      (await runGit(repo, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"]))
+        .exitCode,
+      0,
+    );
+
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
+mkdirSync(join(process.cwd(), 'node_modules', '.bin'), { recursive: true });
+writeFileSync(join(process.cwd(), 'node_modules', '.bin', 'tool'), 'blocked\\n');
+console.log('wrote ignored tool');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "blocked-ignored-path",
+        goal: "Implement demo.",
+        instructions: "Only touch allowed files.",
+        allowed_write_paths: ["**"],
+        validation_commands: ["node -e \"process.exit(1)\""],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: join(repo, ".codex-planexec", "runs", "blocked-ignored-path"),
+    });
+
+    assert.doesNotMatch((await runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"])).stdout, /node_modules/);
+    assert.equal(review.status, "rejected");
+    assert.deepEqual(
+      review.changed_files.map((file) => file.path),
+      ["node_modules/.bin/tool"],
+    );
+    assert.deepEqual(review.policy.violations, ["node_modules/.bin/tool matches blocked_paths"]);
+    assert.equal(review.validation.status, "skipped");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("runHarness rejects renames from blocked paths into allowed paths", async () => {
   const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
   const repo = join(root, "repo");

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 
 import { createRunDirectory, writeJsonArtifact, writeTextArtifact } from "./artifacts.ts";
+import { collectFilesystemPolicySnapshot, diffFilesystemPolicySnapshots } from "./filesystem-policy.ts";
 import { collectGitSnapshot, resolveGitBaseRef } from "./git.ts";
 import { countDiffStatsByPath, filterDiffByPaths, selectDiffHunks, splitDiffByPath } from "./evidence.ts";
 import { evaluateWritePolicy } from "./policy.ts";
@@ -23,6 +24,7 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
   const runDir = await createRunDirectory(options.out);
   const task = await readTaskSpec(options.taskPath);
   const preSnapshot = await collectGitSnapshot(repo);
+  const preFilesystemPolicySnapshot = await collectFilesystemPolicySnapshot(repo, task.blocked_paths);
   const preRunBaseRef = await resolveGitBaseRef(repo);
 
   await writeJsonArtifact(runDir, "task.json", task);
@@ -47,9 +49,15 @@ export async function runHarness(options: RunOptions): Promise<ReviewPacket> {
   await writeTextArtifact(runDir, "stderr.log", workerRun.stderr);
 
   const postSnapshot = await collectGitSnapshot(repo, { baseRef: preRunBaseRef });
+  const postFilesystemPolicySnapshot = await collectFilesystemPolicySnapshot(repo, task.blocked_paths);
+  const filesystemPolicyChangedFiles = diffFilesystemPolicySnapshots(
+    preFilesystemPolicySnapshot,
+    postFilesystemPolicySnapshot,
+  );
   const changedFiles = selectWorkerChangedFiles({
     preSnapshot,
     postSnapshot,
+    filesystemPolicyChangedFiles,
     repo,
     runDir,
   });
@@ -142,17 +150,23 @@ function excludeRunArtifacts(changedFiles: string[], repo: string, runDir: strin
 function selectWorkerChangedFiles(input: {
   preSnapshot: GitSnapshot;
   postSnapshot: GitSnapshot;
+  filesystemPolicyChangedFiles: string[];
   repo: string;
   runDir: string;
 }): string[] {
   const postFiles = new Set(excludeRunArtifacts(input.postSnapshot.changedFiles, input.repo, input.runDir));
   const preFiles = new Set(excludeRunArtifacts(input.preSnapshot.changedFiles, input.repo, input.runDir));
+  const filesystemPolicyFiles = new Set(excludeRunArtifacts(input.filesystemPolicyChangedFiles, input.repo, input.runDir));
   const preDiffs = splitDiffByPath(input.preSnapshot.diff);
   const postDiffs = splitDiffByPath(input.postSnapshot.diff);
-  const candidateFiles = new Set([...preFiles, ...postFiles]);
+  const candidateFiles = new Set([...preFiles, ...postFiles, ...filesystemPolicyFiles]);
 
   return [...candidateFiles]
     .filter((file) => {
+      if (filesystemPolicyFiles.has(file)) {
+        return true;
+      }
+
       const preDiff = preDiffs.get(file) ?? "";
       const postDiff = postDiffs.get(file) ?? "";
 
