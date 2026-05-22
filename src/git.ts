@@ -48,8 +48,15 @@ export function parsePorcelainStatusPaths(status: string): string[] {
     }
 
     const rawPath = line.slice(3);
-    const renamedPath = rawPath.includes(" -> ") ? rawPath.split(" -> ").at(-1)! : rawPath;
-    paths.add(unquoteGitPath(renamedPath));
+    const renameSeparatorIndex = rawPath.lastIndexOf(" -> ");
+
+    if (renameSeparatorIndex === -1) {
+      paths.add(unquoteGitPath(rawPath));
+      continue;
+    }
+
+    paths.add(unquoteGitPath(rawPath.slice(0, renameSeparatorIndex)));
+    paths.add(unquoteGitPath(rawPath.slice(renameSeparatorIndex + " -> ".length)));
   }
 
   return [...paths].sort();

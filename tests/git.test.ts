@@ -6,10 +6,10 @@ import test from "node:test";
 
 import { assertGitRepo, collectGitSnapshot, parsePorcelainStatusPaths, runGit } from "../src/git.ts";
 
-test("parsePorcelainStatusPaths includes modified, untracked, and rename targets", () => {
+test("parsePorcelainStatusPaths includes modified, untracked, and both rename paths", () => {
   const paths = parsePorcelainStatusPaths(" M src/index.ts\n?? tests/new.test.ts\nR  old.ts -> src/new.ts\n");
 
-  assert.deepEqual(paths, ["src/index.ts", "src/new.ts", "tests/new.test.ts"]);
+  assert.deepEqual(paths, ["old.ts", "src/index.ts", "src/new.ts", "tests/new.test.ts"]);
 });
 
 test("assertGitRepo rejects non-repositories", async () => {

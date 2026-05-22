@@ -131,6 +131,74 @@ console.log('changed lockfile');
   }
 });
 
+test("runHarness rejects renames from blocked paths into allowed paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
+  const repo = join(root, "repo");
+
+  try {
+    await mkdir(repo);
+    assert.equal((await runGit(repo, ["init"])).exitCode, 0);
+    await writeFile(join(repo, ".env"), "SECRET=1\n", "utf8");
+    assert.equal((await runGit(repo, ["add", ".env"])).exitCode, 0);
+    assert.equal(
+      (await runGit(repo, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"]))
+        .exitCode,
+      0,
+    );
+
+    const fakeKimi = join(root, "fake-kimi.mjs");
+    await writeFile(
+      fakeKimi,
+      `#!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] === 'info') {
+  console.log('fake kimi info ok');
+  process.exit(0);
+}
+mkdirSync(join(process.cwd(), 'src'), { recursive: true });
+execFileSync('git', ['mv', '.env', 'src/leaked.env'], { cwd: process.cwd() });
+console.log('renamed env into src');
+`,
+      "utf8",
+    );
+    await chmod(fakeKimi, 0o755);
+    await writeFile(
+      join(root, "task.json"),
+      JSON.stringify({
+        id: "blocked-rename",
+        goal: "Implement demo.",
+        instructions: "Only touch src.",
+        allowed_write_paths: ["src/**"],
+        worker: {
+          kind: "kimi",
+          command: fakeKimi,
+          max_steps_per_turn: 20,
+          extra_args: [],
+        },
+      }),
+      "utf8",
+    );
+
+    const review = await runHarness({
+      taskPath: join(root, "task.json"),
+      repo,
+      out: join(repo, ".codex-planexec", "runs", "blocked-rename"),
+    });
+
+    assert.equal(review.status, "rejected");
+    assert.deepEqual(
+      review.changed_files.map((file) => file.path),
+      [".env", "src/leaked.env"],
+    );
+    assert.deepEqual(review.policy.violations, [".env matches blocked_paths"]);
+    assert.equal(review.validation.status, "skipped");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("runHarness stops before worker execution when Kimi info preflight fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "planexec-runner-"));
   const repo = join(root, "repo");
